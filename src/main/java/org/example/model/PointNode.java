@@ -1,0 +1,14 @@
+package org.example.model;
+
+public class PointNode {
+    private final double x;
+    private final double y;
+
+    public PointNode(double x, double y) {
+        this.x = x;
+        this.y = y;
+    }
+
+    public double x() { return x; }
+    public double y() { return y; }
+}
