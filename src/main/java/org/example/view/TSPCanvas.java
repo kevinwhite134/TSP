@@ -4,6 +4,8 @@ import javafx.geometry.Point2D;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.Pane;
 import javafx.scene.paint.Color;
+import javafx.scene.shape.Arc;
+import javafx.scene.shape.ArcType;
 import javafx.scene.shape.Circle;
 import javafx.scene.shape.Line;
 import javafx.scene.text.Text;
@@ -24,8 +26,9 @@ public class TSPCanvas extends Pane {
     // circles centered at COM, radius = dist(point, COM)
     private final List<Circle> comCenteredCircles = new ArrayList<>();
 
-    // NEW: angle labels on canvas
+    // angle labels/arcs on canvas
     private final List<Text> angleTexts = new ArrayList<>();
+    private final List<Arc> angleArcs = new ArrayList<>();
 
     private Circle comDot = null;
     private Circle outerCircle = null;
@@ -193,17 +196,18 @@ public class TSPCanvas extends Pane {
         comCenteredCircles.clear();
     }
 
-    // -------- NEW: ANGLES ON CANVAS --------
-
     public void clearAngleLabels() {
+        for (Arc a : angleArcs) getChildren().remove(a);
+        angleArcs.clear();
+
         for (Text t : angleTexts) getChildren().remove(t);
         angleTexts.clear();
     }
 
     /**
      * Draws:
-     *  - internal angle at each node u: angle(prev-u-next), shown near node u
-     *  - COM angle for each step u->next: angle(COM->u , COM->next), shown near COM (slightly offset)
+     *  - internal angle at each node u: angle(prev-u-next), shown inside its arc
+     *  - COM angle for each step u->next: angle(COM->u , COM->next), shown inside its arc
      *
      * order must be a tour order (size >= 3). closedLoop assumed.
      */
@@ -221,62 +225,126 @@ public class TSPCanvas extends Pane {
 
             if (!validIndex(prev) || !validIndex(u) || !validIndex(next)) continue;
 
-            PointNode A = points.get(prev);
-            PointNode B = points.get(u);
-            PointNode C = points.get(next);
+            PointNode a = points.get(prev);
+            PointNode b = points.get(u);
+            PointNode c = points.get(next);
 
-            double ang = angleAtVertexDeg(A, B, C);
+            double ang = angleAtVertexDeg(a, b, c);
             if (!Double.isFinite(ang)) continue;
 
-            Text t = new Text(B.x() + 10, B.y() + 16, "ang=" + (int) Math.round(ang) + " deg");
+            double bax = a.x() - b.x();
+            double bay = a.y() - b.y();
+            double bcx = c.x() - b.x();
+            double bcy = c.y() - b.y();
+
+            double a1 = normalizeDeg(Math.toDegrees(Math.atan2(-bay, bax)));
+            double a2 = normalizeDeg(Math.toDegrees(Math.atan2(-bcy, bcx)));
+            double delta = shortestDeltaDeg(a1, a2);
+
+            double arcRadius = 20;
+            Arc arc = new Arc(b.x(), b.y(), arcRadius, arcRadius, a1, delta);
+            arc.setType(ArcType.OPEN);
+            arc.setFill(Color.TRANSPARENT);
+            arc.setStroke(Color.web("#d7d7d7"));
+            arc.setStrokeWidth(1.6);
+            angleArcs.add(arc);
+
+            double ux = bax;
+            double uy = bay;
+            double vx = bcx;
+            double vy = bcy;
+            double um = Math.sqrt(ux * ux + uy * uy);
+            double vm = Math.sqrt(vx * vx + vy * vy);
+            if (um == 0 || vm == 0) continue;
+            ux /= um;
+            uy /= um;
+            vx /= vm;
+            vy /= vm;
+
+            double bx = ux + vx;
+            double by = uy + vy;
+            double bm = Math.sqrt(bx * bx + by * by);
+            if (bm == 0) continue;
+            bx /= bm;
+            by /= bm;
+
+            double tx = b.x() + bx * (arcRadius - 8);
+            double ty = b.y() + by * (arcRadius - 8);
+
+            Text t = new Text(tx - 6, ty + 4, String.valueOf((int) Math.round(ang)));
             t.setFill(Color.web("#e6e6e6"));
             t.setStyle("-fx-font-size: 12px; -fx-font-weight: bold;");
             angleTexts.add(t);
         }
 
         // COM angles between consecutive rays (u -> next)
-        // Place each label near COM, offset in the direction of the bisector.
         for (int k = 0; k < n; k++) {
             int u = order.get(k);
             int v = order.get((k + 1) % n);
             if (!validIndex(u) || !validIndex(v)) continue;
 
-            PointNode U = points.get(u);
-            PointNode V = points.get(v);
+            PointNode up = points.get(u);
+            PointNode vp = points.get(v);
 
-            double comAng = angleBetweenFromComDeg(com, U, V);
+            double comAng = angleBetweenFromComDeg(com, up, vp);
             if (!Double.isFinite(comAng)) continue;
 
-            // bisector direction (normalized sum of unit vectors)
-            double ux = U.x() - com.getX();
-            double uy = U.y() - com.getY();
-            double vx = V.x() - com.getX();
-            double vy = V.y() - com.getY();
+            double ux = up.x() - com.getX();
+            double uy = up.y() - com.getY();
+            double vx = vp.x() - com.getX();
+            double vy = vp.y() - com.getY();
+
+            double a1 = normalizeDeg(Math.toDegrees(Math.atan2(-uy, ux)));
+            double a2 = normalizeDeg(Math.toDegrees(Math.atan2(-vy, vx)));
+            double delta = shortestDeltaDeg(a1, a2);
+
+            double arcRadius = 28;
+            Arc arc = new Arc(com.getX(), com.getY(), arcRadius, arcRadius, a1, delta);
+            arc.setType(ArcType.OPEN);
+            arc.setFill(Color.TRANSPARENT);
+            arc.setStroke(Color.web("#bbbbbb"));
+            arc.setStrokeWidth(1.4);
+            angleArcs.add(arc);
 
             double um = Math.sqrt(ux * ux + uy * uy);
             double vm = Math.sqrt(vx * vx + vy * vy);
             if (um == 0 || vm == 0) continue;
 
-            ux /= um; uy /= um;
-            vx /= vm; vy /= vm;
+            ux /= um;
+            uy /= um;
+            vx /= vm;
+            vy /= vm;
 
             double bx = ux + vx;
             double by = uy + vy;
             double bm = Math.sqrt(bx * bx + by * by);
             if (bm == 0) continue;
-            bx /= bm; by /= bm;
+            bx /= bm;
+            by /= bm;
 
-            double px = com.getX() + bx * 26;
-            double py = com.getY() + by * 26;
+            double px = com.getX() + bx * (arcRadius - 8);
+            double py = com.getY() + by * (arcRadius - 8);
 
-            Text t = new Text(px, py, "com=" + (int) Math.round(comAng) + " deg");
+            Text t = new Text(px - 6, py + 4, String.valueOf((int) Math.round(comAng)));
             t.setFill(Color.web("#cfcfcf"));
             t.setStyle("-fx-font-size: 11px; -fx-font-weight: bold;");
             angleTexts.add(t);
         }
 
-        // Add angle text above tour lines so it stays readable
+        // Arcs first, then values.
+        getChildren().addAll(angleArcs);
         getChildren().addAll(angleTexts);
+    }
+
+    private double normalizeDeg(double d) {
+        double out = d % 360.0;
+        if (out < 0) out += 360.0;
+        return out;
+    }
+
+    // Signed shortest delta from a1 to a2 in [-180, 180].
+    private double shortestDeltaDeg(double a1, double a2) {
+        return (a2 - a1 + 540.0) % 360.0 - 180.0;
     }
 
     private boolean validIndex(int i) {
@@ -380,6 +448,7 @@ public class TSPCanvas extends Pane {
         rayLines.clear();
         comCenteredCircles.clear();
         angleTexts.clear();
+        angleArcs.clear();
 
         comDot = null;
         outerCircle = null;
