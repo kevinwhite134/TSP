@@ -6,9 +6,9 @@ import javafx.scene.Parent;
 import javafx.scene.control.*; // includes SplitPane
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
+import org.example.model.HullOrderChecker;
 import org.example.model.PointNode;
 import org.example.model.TSPBruteForce;
 import org.example.model.TSPHeuristic;
@@ -17,6 +17,8 @@ import org.example.view.TSPCanvas;
 import java.util.*;
 
 public class TSPController {
+
+    private static final int MAX_BRUTE_FORCE_POINTS = 11;
 
     private final BorderPane root = new BorderPane();
 
@@ -29,10 +31,12 @@ public class TSPController {
     private final CheckBox manualMode = new CheckBox("Manual placement");
 
     private final CheckBox showComCenteredCircles = new CheckBox("Show COM-centered circles");
+    private final CheckBox showAverageComCircle = new CheckBox("Show average COM circle");
+    private final CheckBox showRmsComCircle = new CheckBox("Show RMS COM circle");
     private final CheckBox extendRays = new CheckBox("Extend rays through COM");
-
-    // NEW: show angles on the actual display
     private final CheckBox showAngles = new CheckBox("Show angles");
+    private final CheckBox highlightHullPoints = new CheckBox("Hull points");
+    private final CheckBox showHullPath = new CheckBox("Hull path");
 
     private final Button solveBtn = new Button("Solve");
     private final Button clearBtn = new Button("Clear points");
@@ -43,9 +47,6 @@ public class TSPController {
 
     private final Label bruteMeta = new Label("");
     private final Label heurMeta = new Label("");
-
-    private final TextArea bruteDetails = new TextArea();
-    private final TextArea heurDetails = new TextArea();
 
     private final Random rng = new Random();
     private List<PointNode> points = new ArrayList<>();
@@ -79,12 +80,20 @@ public class TSPController {
 
         manualMode.setStyle("-fx-text-fill: #ddd;");
         showComCenteredCircles.setStyle("-fx-text-fill: #ddd;");
+        showAverageComCircle.setStyle("-fx-text-fill: #ddd;");
+        showRmsComCircle.setStyle("-fx-text-fill: #ddd;");
         extendRays.setStyle("-fx-text-fill: #ddd;");
         showAngles.setStyle("-fx-text-fill: #ddd;");
+        highlightHullPoints.setStyle("-fx-text-fill: #ddd;");
+        showHullPath.setStyle("-fx-text-fill: #ddd;");
 
         showComCenteredCircles.selectedProperty().addListener((obs, ov, nv) -> solveCurrentPoints());
+        showAverageComCircle.selectedProperty().addListener((obs, ov, nv) -> solveCurrentPoints());
+        showRmsComCircle.selectedProperty().addListener((obs, ov, nv) -> solveCurrentPoints());
         extendRays.selectedProperty().addListener((obs, ov, nv) -> solveCurrentPoints());
         showAngles.selectedProperty().addListener((obs, ov, nv) -> solveCurrentPoints());
+        highlightHullPoints.selectedProperty().addListener((obs, ov, nv) -> solveCurrentPoints());
+        showHullPath.selectedProperty().addListener((obs, ov, nv) -> solveCurrentPoints());
 
         manualMode.selectedProperty().addListener((obs, oldV, newV) -> {
             if (newV) {
@@ -107,8 +116,12 @@ public class TSPController {
                 regenBtn,
                 manualMode,
                 showComCenteredCircles,
+                showAverageComCircle,
+                showRmsComCircle,
                 extendRays,
                 showAngles,
+                highlightHullPoints,
+                showHullPath,
                 solveBtn,
                 clearBtn
         );
@@ -121,28 +134,18 @@ public class TSPController {
         bruteMeta.setStyle("-fx-text-fill: #bbb; -fx-font-size: 14;");
         heurMeta.setStyle("-fx-text-fill: #bbb; -fx-font-size: 14;");
 
-        setupDetailsArea(bruteDetails);
-        setupDetailsArea(heurDetails);
-
-        VBox.setVgrow(bruteDetails, Priority.ALWAYS);
-        VBox.setVgrow(heurDetails, Priority.ALWAYS);
-
         VBox leftBox = new VBox(6,
                 styledTitle("Brute Force (optimal for small N)"),
                 left,
                 bruteLabel,
-                bruteMeta,
-                styledSubTitle("Transitions (aligned to heuristic order)"),
-                bruteDetails
+                bruteMeta
         );
 
         VBox rightBox = new VBox(6,
                 styledTitle("Heuristic (angle around COM)"),
                 right,
                 heurLabel,
-                heurMeta,
-                styledSubTitle("Transitions (heuristic path order)"),
-                heurDetails
+                heurMeta
         );
 
         leftBox.setPadding(new Insets(10));
@@ -158,27 +161,9 @@ public class TSPController {
         root.setStyle("-fx-background-color: #0b0b0b;");
     }
 
-    private void setupDetailsArea(TextArea ta) {
-        ta.setEditable(false);
-        ta.setWrapText(false);
-        ta.setPrefRowCount(14);
-        ta.setStyle("""
-                -fx-control-inner-background: #0f0f0f;
-                -fx-text-fill: #dcdcdc;
-                -fx-font-family: Consolas;
-                -fx-font-size: 14px;
-                """);
-    }
-
     private Label styledTitle(String s) {
         Label l = new Label(s);
         l.setStyle("-fx-text-fill: #ddd; -fx-font-size: 14;");
-        return l;
-    }
-
-    private Label styledSubTitle(String s) {
-        Label l = new Label(s);
-        l.setStyle("-fx-text-fill: #bbb; -fx-font-size: 12;");
         return l;
     }
 
@@ -213,9 +198,6 @@ public class TSPController {
         right.addPoint(node);
 
         points = right.getPoints();
-
-        bruteDetails.setText("");
-        heurDetails.setText("");
 
         solveCurrentPoints();
     }
@@ -260,8 +242,6 @@ public class TSPController {
         heurLabel.setText("Heuristic: -");
         bruteMeta.setText("");
         heurMeta.setText("");
-        bruteDetails.setText("");
-        heurDetails.setText("");
     }
 
     private void regenerate() {
@@ -283,18 +263,28 @@ public class TSPController {
         if (points == null || points.size() < 3) {
             heurLabel.setText("Heuristic length: - (need 3+ points)");
             bruteLabel.setText("Brute length: - (need 3+ points)");
-            bruteDetails.setText("");
-            heurDetails.setText("");
 
             left.clearComCenteredCircles();
             right.clearComCenteredCircles();
+            left.clearAverageComCircle();
+            right.clearAverageComCircle();
+            left.clearRmsComCircle();
+            right.clearRmsComCircle();
+            left.clearAverageIntersections();
+            right.clearAverageIntersections();
+            left.clearRmsIntersections();
+            right.clearRmsIntersections();
             left.clearAngleLabels();
             right.clearAngleLabels();
+            left.clearConvexHullOverlay();
+            right.clearConvexHullOverlay();
             return;
         }
 
         Point2D com = centreOfMass(points);
         double r = enclosingRadius(points, com);
+        double avgRadius = averageRadiusToCom(points, com);
+        double rmsRadius = rmsRadiusToCom(points, com);
         boolean extend = extendRays.isSelected();
 
         left.clearAll();
@@ -318,12 +308,16 @@ public class TSPController {
             right.clearComCenteredCircles();
         }
 
-        // heuristic
         TSPHeuristic.Result heurRes = TSPHeuristic.solveByAngle(points, com);
+        HullOrderChecker.CheckResult hullCheck = HullOrderChecker.check(points, heurRes.order);
+        System.out.printf("HullOrder[Heuristic]: %s (n=%d, hullCorners=%d)%n",
+                hullCheck.follows() ? "PASS" : "FAIL",
+                points.size(),
+                hullCheck.hullCorners());
         double heurLen = closedTourLength(points, heurRes.order);
 
         int n = points.size();
-        if (n <= 12) {
+        if (n <= MAX_BRUTE_FORCE_POINTS) {
             TSPBruteForce.Result bruteRes = TSPBruteForce.solve(points);
             double bestLen = bruteRes.length;
 
@@ -338,6 +332,8 @@ public class TSPController {
                     Color.RED
             );
 
+            applyCircleOverlaysAndIntersections(com, avgRadius, rmsRadius, bruteRes.order, heurRes.order, true);
+
             double off = heurLen - bestLen;
             double pct = (bestLen == 0) ? 0 : (off / bestLen) * 100.0;
 
@@ -347,13 +343,6 @@ public class TSPController {
             heurMeta.setText(metaText(heurRes.bigO, heurRes.elapsedNanos, heurRes.operations));
             bruteMeta.setText(metaText(bruteRes.bigO, bruteRes.elapsedNanos, bruteRes.operations));
 
-            int[] bruteNext = buildNextMap(n, bruteRes.order, true);
-            int[] brutePrev = buildPrevFromNext(bruteNext);
-
-            heurDetails.setText(buildTransitionsWithLabels(points, heurRes.order, com, true, null, null));
-            bruteDetails.setText(buildTransitionsWithLabels(points, heurRes.order, com, true, bruteNext, brutePrev));
-
-            // NEW: draw angles on canvases
             if (showAngles.isSelected()) {
                 left.showAngles(com, bruteRes.order);
                 right.showAngles(com, heurRes.order);
@@ -362,20 +351,20 @@ public class TSPController {
                 right.clearAngleLabels();
             }
 
+            applyConvexHullOverlay();
+
         } else {
             right.setTourOrderColor(heurRes.order, true, Color.RED);
             left.setTourOrder(List.of(), true);
 
-            bruteLabel.setText("Brute length: (disabled for N > 12)");
+            applyCircleOverlaysAndIntersections(com, avgRadius, rmsRadius, List.of(), heurRes.order, false);
+
+            bruteLabel.setText("Brute length: (disabled for N > " + MAX_BRUTE_FORCE_POINTS + ")");
             bruteMeta.setText("Big-O: O(n!)   Time: -   Ops: -");
 
             heurLabel.setText(String.format("Heuristic length: %.2f   (off: N/A)", heurLen));
             heurMeta.setText(metaText(heurRes.bigO, heurRes.elapsedNanos, heurRes.operations));
 
-            heurDetails.setText(buildTransitionsWithLabels(points, heurRes.order, com, true, null, null));
-            bruteDetails.setText("-");
-
-            // NEW: only heuristic angles available
             if (showAngles.isSelected()) {
                 left.clearAngleLabels();
                 right.showAngles(com, heurRes.order);
@@ -383,115 +372,69 @@ public class TSPController {
                 left.clearAngleLabels();
                 right.clearAngleLabels();
             }
+
+            applyConvexHullOverlay();
+        }
+    }
+
+    private void applyConvexHullOverlay() {
+        boolean highlight = highlightHullPoints.isSelected();
+        boolean connect = showHullPath.isSelected();
+        if (!highlight && !connect) {
+            left.clearConvexHullOverlay();
+            right.clearConvexHullOverlay();
+            return;
+        }
+
+        List<Integer> hullOrder = HullOrderChecker.convexHullCorners(points);
+        left.showConvexHullOverlay(hullOrder, highlight, connect);
+        right.showConvexHullOverlay(hullOrder, highlight, connect);
+    }
+
+    private void applyCircleOverlaysAndIntersections(Point2D com,
+                                                     double avgRadius,
+                                                     double rmsRadius,
+                                                     List<Integer> leftOrder,
+                                                     List<Integer> rightOrder,
+                                                     boolean leftHasTour) {
+        if (showAverageComCircle.isSelected()) {
+            left.showAverageComCircle(com, avgRadius);
+            right.showAverageComCircle(com, avgRadius);
+
+            if (leftHasTour) {
+                left.showAverageIntersections(leftOrder, true, com, avgRadius);
+            } else {
+                left.clearAverageIntersections();
+            }
+            right.showAverageIntersections(rightOrder, true, com, avgRadius);
+        } else {
+            left.clearAverageComCircle();
+            right.clearAverageComCircle();
+            left.clearAverageIntersections();
+            right.clearAverageIntersections();
+        }
+
+        if (showRmsComCircle.isSelected()) {
+            left.showRmsComCircle(com, rmsRadius);
+            right.showRmsComCircle(com, rmsRadius);
+
+            if (leftHasTour) {
+                left.showRmsIntersections(leftOrder, true, com, rmsRadius);
+            } else {
+                left.clearRmsIntersections();
+            }
+            right.showRmsIntersections(rightOrder, true, com, rmsRadius);
+        } else {
+            left.clearRmsComCircle();
+            right.clearRmsComCircle();
+            left.clearRmsIntersections();
+            right.clearRmsIntersections();
         }
     }
 
     private String metaText(String bigO, long nanos, long ops) {
         double ms = nanos / 1_000_000.0;
         return String.format("Big-O: %s   Time: %.3f ms   Ops: %,d", bigO, ms, ops);
-    }
-
-    // ---- your existing transitions text (kept as-is) ----
-    private String buildTransitionsWithLabels(List<PointNode> pts,
-                                              List<Integer> order,
-                                              Point2D com,
-                                              boolean closedLoop,
-                                              int[] overrideNext,
-                                              int[] overridePrev) {
-        if (order == null || order.size() < 2) return "-";
-
-        StringBuilder sb = new StringBuilder();
-        int steps = order.size() - 1 + (closedLoop ? 1 : 0);
-        int size = order.size();
-
-        for (int k = 0; k < steps; k++) {
-            int u = order.get(k % size);
-
-            int v = (overrideNext == null)
-                    ? order.get((k + 1) % size)
-                    : overrideNext[u];
-
-            if (u < 0 || u >= pts.size() || v < 0 || v >= pts.size()) {
-                sb.append(String.format("Node %02d: (invalid)\n", u + 1));
-                continue;
-            }
-
-            PointNode U = pts.get(u);
-            PointNode V = pts.get(v);
-
-            double dUV = dist(U, V);
-            double du = distToCom(U, com);
-            double dv = distToCom(V, com);
-
-            double rForward = (du == 0) ? Double.POSITIVE_INFINITY : dUV / du;
-            double rReverse = (dv == 0) ? Double.POSITIVE_INFINITY : dUV / dv;
-
-            int prevU, nextU;
-            if (overrideNext == null || overridePrev == null) {
-                prevU = order.get((k - 1 + size) % size);
-                nextU = order.get((k + 1) % size);
-            } else {
-                prevU = overridePrev[u];
-                nextU = overrideNext[u];
-            }
-
-            double nodeRatio;
-            if (prevU < 0 || nextU < 0) {
-                nodeRatio = Double.NaN;
-            } else {
-                double sumTwo = dist(pts.get(prevU), pts.get(u)) + dist(pts.get(u), pts.get(nextU));
-                nodeRatio = (du == 0) ? Double.POSITIVE_INFINITY : (sumTwo / du);
-            }
-
-            String nodeRStr;
-            if (Double.isNaN(nodeRatio)) nodeRStr = "NA";
-            else if (Double.isInfinite(nodeRatio)) nodeRStr = "INF";
-            else nodeRStr = String.format("%.4f", nodeRatio);
-
-            sb.append(String.format(
-                    "Node %02d: prev=%02d next=%02d | %02d->%02d r=%.4f | %02d->%02d r=%.4f | nodeR=%s\n",
-                    u + 1,
-                    (prevU < 0 ? 0 : prevU + 1),
-                    (nextU < 0 ? 0 : nextU + 1),
-                    u + 1, v + 1, rForward,
-                    v + 1, u + 1, rReverse,
-                    nodeRStr
-            ));
-        }
-
-        return sb.toString();
-    }
-
-    // ---- brute helpers ----
-    private int[] buildNextMap(int n, List<Integer> order, boolean closedLoop) {
-        int[] next = new int[n];
-        Arrays.fill(next, -1);
-
-        if (order == null || order.size() < 2) return next;
-
-        for (int i = 0; i < order.size() - 1; i++) {
-            int u = order.get(i);
-            int v = order.get(i + 1);
-            if (u >= 0 && u < n) next[u] = v;
-        }
-
-        if (closedLoop && order.size() > 2) {
-            int last = order.get(order.size() - 1);
-            int first = order.get(0);
-            if (last >= 0 && last < n) next[last] = first;
-        }
-
-        return next;
-    }
-
-    private int[] buildPrevFromNext(int[] next) {
-        int[] prev = new int[next.length];
-        Arrays.fill(prev, -1);
-        for (int u = 0; u < next.length; u++) {
-            int v = next[u];
-            if (v >= 0 && v < next.length) prev[v] = u;
-        }
-        return prev;
     }
 
     private static long edgeKey(int a, int b) {
@@ -513,7 +456,6 @@ public class TSPController {
         return set;
     }
 
-    // ---- geometry ----
     private List<PointNode> randomPoints(int n, double w, double h, double pad) {
         List<PointNode> pts = new ArrayList<>();
         for (int i = 0; i < n; i++) {
@@ -544,6 +486,28 @@ public class TSPController {
         return max + 12;
     }
 
+    private double averageRadiusToCom(List<PointNode> pts, Point2D com) {
+        if (pts == null || pts.isEmpty()) return 0;
+        double sum = 0;
+        for (PointNode p : pts) {
+            double dx = p.x() - com.getX();
+            double dy = p.y() - com.getY();
+            sum += Math.sqrt(dx * dx + dy * dy);
+        }
+        return sum / pts.size();
+    }
+
+    private double rmsRadiusToCom(List<PointNode> pts, Point2D com) {
+        if (pts == null || pts.isEmpty()) return 0;
+        double sumSq = 0;
+        for (PointNode p : pts) {
+            double dx = p.x() - com.getX();
+            double dy = p.y() - com.getY();
+            sumSq += dx * dx + dy * dy;
+        }
+        return Math.sqrt(sumSq / pts.size());
+    }
+
     private double closedTourLength(List<PointNode> pts, List<Integer> order) {
         if (order.size() < 2) return 0;
         double total = 0;
@@ -557,12 +521,6 @@ public class TSPController {
     private double dist(PointNode a, PointNode b) {
         double dx = a.x() - b.x();
         double dy = a.y() - b.y();
-        return Math.sqrt(dx * dx + dy * dy);
-    }
-
-    private double distToCom(PointNode a, Point2D com) {
-        double dx = a.x() - com.getX();
-        double dy = a.y() - com.getY();
         return Math.sqrt(dx * dx + dy * dy);
     }
 }

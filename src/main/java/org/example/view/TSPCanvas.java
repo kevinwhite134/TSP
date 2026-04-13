@@ -18,13 +18,23 @@ import java.util.function.Consumer;
 
 public class TSPCanvas extends Pane {
 
+    private static final double INTERSECTION_EPS = 1e-9;
+    private static final double DEDUP_EPS_PX = 0.75;
+
     private final List<Circle> pointCircles = new ArrayList<>();
     private final List<Text> pointLabels = new ArrayList<>();
     private final List<Line> tourLines = new ArrayList<>();
+    private final List<Line> hullLines = new ArrayList<>();
+    private final List<Circle> hullMarkers = new ArrayList<>();
     private final List<Line> rayLines = new ArrayList<>();
 
     // circles centered at COM, radius = dist(point, COM)
     private final List<Circle> comCenteredCircles = new ArrayList<>();
+    private Circle averageComCircle = null;
+    private Circle rmsComCircle = null;
+
+    private final List<Circle> averageIntersectionMarkers = new ArrayList<>();
+    private final List<Circle> rmsIntersectionMarkers = new ArrayList<>();
 
     // angle labels/arcs on canvas
     private final List<Text> angleTexts = new ArrayList<>();
@@ -84,15 +94,26 @@ public class TSPCanvas extends Pane {
         pointLabels.clear();
 
         clearComCenteredCircles();
+        clearAverageComCircle();
+        clearRmsComCircle();
+        clearAverageIntersections();
+        clearRmsIntersections();
         clearAngleLabels();
+        clearConvexHullOverlay();
 
         points.clear();
 
         clearTourLines();
         clearRays();
 
-        if (comDot != null) { getChildren().remove(comDot); comDot = null; }
-        if (outerCircle != null) { getChildren().remove(outerCircle); outerCircle = null; }
+        if (comDot != null) {
+            getChildren().remove(comDot);
+            comDot = null;
+        }
+        if (outerCircle != null) {
+            getChildren().remove(outerCircle);
+            outerCircle = null;
+        }
     }
 
     public void setComDot(Point2D com) {
@@ -194,6 +215,161 @@ public class TSPCanvas extends Pane {
     public void clearComCenteredCircles() {
         for (Circle c : comCenteredCircles) getChildren().remove(c);
         comCenteredCircles.clear();
+    }
+
+    public void showAverageComCircle(Point2D com, double radius) {
+        clearAverageComCircle();
+        if (!Double.isFinite(radius) || radius <= 0) return;
+
+        averageComCircle = new Circle(com.getX(), com.getY(), radius);
+        averageComCircle.setFill(Color.TRANSPARENT);
+        averageComCircle.setStroke(Color.web("#1e3a8a"));
+        averageComCircle.setStrokeWidth(2.0);
+        averageComCircle.setOpacity(0.95);
+
+        int idx = 0;
+        if (outerCircle != null) idx = Math.max(0, getChildren().indexOf(outerCircle) + 1);
+        getChildren().add(idx, averageComCircle);
+    }
+
+    public void clearAverageComCircle() {
+        if (averageComCircle != null) {
+            getChildren().remove(averageComCircle);
+            averageComCircle = null;
+        }
+    }
+
+    public void showRmsComCircle(Point2D com, double radius) {
+        clearRmsComCircle();
+        if (!Double.isFinite(radius) || radius <= 0) return;
+
+        rmsComCircle = new Circle(com.getX(), com.getY(), radius);
+        rmsComCircle.setFill(Color.TRANSPARENT);
+        rmsComCircle.setStroke(Color.web("#ff4fa3"));
+        rmsComCircle.setStrokeWidth(2.0);
+        rmsComCircle.setOpacity(0.95);
+
+        int idx = 0;
+        if (outerCircle != null) idx = Math.max(0, getChildren().indexOf(outerCircle) + 1);
+        getChildren().add(idx, rmsComCircle);
+    }
+
+    public void clearRmsComCircle() {
+        if (rmsComCircle != null) {
+            getChildren().remove(rmsComCircle);
+            rmsComCircle = null;
+        }
+    }
+
+    public void showAverageIntersections(List<Integer> order, boolean closedLoop, Point2D com, double radius) {
+        clearAverageIntersections();
+        showIntersections(order, closedLoop, com, radius, Color.web("#1e3a8a"), averageIntersectionMarkers);
+    }
+
+    public void clearAverageIntersections() {
+        for (Circle m : averageIntersectionMarkers) getChildren().remove(m);
+        averageIntersectionMarkers.clear();
+    }
+
+    public void showRmsIntersections(List<Integer> order, boolean closedLoop, Point2D com, double radius) {
+        clearRmsIntersections();
+        showIntersections(order, closedLoop, com, radius, Color.web("#ff4fa3"), rmsIntersectionMarkers);
+    }
+
+    public void clearRmsIntersections() {
+        for (Circle m : rmsIntersectionMarkers) getChildren().remove(m);
+        rmsIntersectionMarkers.clear();
+    }
+
+    private void showIntersections(List<Integer> order,
+                                   boolean closedLoop,
+                                   Point2D com,
+                                   double radius,
+                                   Color color,
+                                   List<Circle> outMarkers) {
+        if (order == null || order.size() < 2 || points.isEmpty()) return;
+        if (!Double.isFinite(radius) || radius <= 0) return;
+
+        List<Point2D> hits = new ArrayList<>();
+
+        int limit = order.size() - 1;
+        for (int i = 0; i < limit; i++) {
+            addSegmentCircleIntersections(order.get(i), order.get(i + 1), com, radius, hits);
+        }
+        if (closedLoop && order.size() > 2) {
+            addSegmentCircleIntersections(order.get(order.size() - 1), order.get(0), com, radius, hits);
+        }
+
+        dedupeIntersections(hits);
+
+        for (Point2D h : hits) {
+            Circle marker = new Circle(h.getX(), h.getY(), 4.0);
+            marker.setFill(color);
+            marker.setStroke(color);
+            marker.setStrokeWidth(1.0);
+            outMarkers.add(marker);
+        }
+
+        getChildren().addAll(outMarkers);
+    }
+
+    private void addSegmentCircleIntersections(int ia, int ib, Point2D com, double radius, List<Point2D> out) {
+        if (!validIndex(ia) || !validIndex(ib)) return;
+
+        PointNode a = points.get(ia);
+        PointNode b = points.get(ib);
+
+        double ax = a.x() - com.getX();
+        double ay = a.y() - com.getY();
+        double bx = b.x() - com.getX();
+        double by = b.y() - com.getY();
+
+        double dx = bx - ax;
+        double dy = by - ay;
+
+        double A = dx * dx + dy * dy;
+        if (A <= INTERSECTION_EPS) return;
+
+        double B = 2.0 * (ax * dx + ay * dy);
+        double C = ax * ax + ay * ay - radius * radius;
+
+        double disc = B * B - 4.0 * A * C;
+        if (disc < -INTERSECTION_EPS) return;
+
+        if (Math.abs(disc) <= INTERSECTION_EPS) {
+            double t = -B / (2.0 * A);
+            if (t >= -INTERSECTION_EPS && t <= 1.0 + INTERSECTION_EPS) {
+                out.add(new Point2D(a.x() + t * (b.x() - a.x()), a.y() + t * (b.y() - a.y())));
+            }
+            return;
+        }
+
+        double sqrt = Math.sqrt(Math.max(0.0, disc));
+        double t1 = (-B - sqrt) / (2.0 * A);
+        double t2 = (-B + sqrt) / (2.0 * A);
+
+        if (t1 >= -INTERSECTION_EPS && t1 <= 1.0 + INTERSECTION_EPS) {
+            out.add(new Point2D(a.x() + t1 * (b.x() - a.x()), a.y() + t1 * (b.y() - a.y())));
+        }
+        if (t2 >= -INTERSECTION_EPS && t2 <= 1.0 + INTERSECTION_EPS) {
+            out.add(new Point2D(a.x() + t2 * (b.x() - a.x()), a.y() + t2 * (b.y() - a.y())));
+        }
+    }
+
+    private void dedupeIntersections(List<Point2D> points2d) {
+        List<Point2D> unique = new ArrayList<>();
+        for (Point2D p : points2d) {
+            boolean seen = false;
+            for (Point2D q : unique) {
+                if (p.distance(q) <= DEDUP_EPS_PX) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen) unique.add(p);
+        }
+        points2d.clear();
+        points2d.addAll(unique);
     }
 
     public void clearAngleLabels() {
@@ -387,6 +563,54 @@ public class TSPCanvas extends Pane {
 
     // -------- TOURS --------
 
+    public void showConvexHullOverlay(List<Integer> hullOrder, boolean highlightPoints, boolean connectPoints) {
+        clearConvexHullOverlay();
+        if (hullOrder == null || hullOrder.isEmpty()) return;
+
+        if (connectPoints && hullOrder.size() >= 2) {
+            int edgeCount = hullOrder.size() == 2 ? 1 : hullOrder.size();
+            for (int i = 0; i < edgeCount; i++) {
+                int u = hullOrder.get(i);
+                int v = hullOrder.get((i + 1) % hullOrder.size());
+                if (!validIndex(u) || !validIndex(v)) continue;
+
+                PointNode a = points.get(u);
+                PointNode b = points.get(v);
+                Line line = new Line(a.x(), a.y(), b.x(), b.y());
+                line.setStroke(Color.web("#ffd166"));
+                line.setStrokeWidth(3.0);
+                line.setOpacity(0.9);
+                line.getStrokeDashArray().addAll(8.0, 5.0);
+                line.setMouseTransparent(true);
+                hullLines.add(line);
+            }
+            getChildren().addAll(hullLines);
+        }
+
+        if (highlightPoints) {
+            for (int idx : hullOrder) {
+                if (!validIndex(idx)) continue;
+
+                PointNode p = points.get(idx);
+                Circle marker = new Circle(p.x(), p.y(), 10);
+                marker.setFill(Color.TRANSPARENT);
+                marker.setStroke(Color.web("#ffd166"));
+                marker.setStrokeWidth(3.0);
+                marker.setMouseTransparent(true);
+                hullMarkers.add(marker);
+            }
+            getChildren().addAll(hullMarkers);
+        }
+    }
+
+    public void clearConvexHullOverlay() {
+        for (Line line : hullLines) getChildren().remove(line);
+        hullLines.clear();
+
+        for (Circle marker : hullMarkers) getChildren().remove(marker);
+        hullMarkers.clear();
+    }
+
     public void setTourOrder(List<Integer> order, boolean closedLoop) {
         setTourOrderColor(order, closedLoop, Color.web("#ff4d6d"));
     }
@@ -445,8 +669,14 @@ public class TSPCanvas extends Pane {
         pointCircles.clear();
         pointLabels.clear();
         tourLines.clear();
+        hullLines.clear();
+        hullMarkers.clear();
         rayLines.clear();
         comCenteredCircles.clear();
+        averageIntersectionMarkers.clear();
+        rmsIntersectionMarkers.clear();
+        averageComCircle = null;
+        rmsComCircle = null;
         angleTexts.clear();
         angleArcs.clear();
 
